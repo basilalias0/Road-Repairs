@@ -1,40 +1,66 @@
 const asyncHandler = require('express-async-handler');
 const Breakdown = require('../models/breakdownModel');
 const User = require('../models/userModel');
-const notificationController = require('./notificationController'); // Import notification controller
+const notificationController = require('./notificationController');
+const { Client } = require('@googlemaps/google-maps-services-js');
+const client = new Client({});
 
 const breakdownController = {
     // @desc    Create a new breakdown request
     // @route   POST /api/breakdowns
     // @access  Private (Customer only)
     createBreakdown: asyncHandler(async (req, res) => {
-        const { description, location, vehicleType, issueType } = req.body;
+        const {
+            vehicle, // { make, model, year, registrationNumber }
+            address,
+            description,
+        } = req.body;
 
-        try {
-            const uploadedImages = req.files ? req.files.map((file) => file.path) : []; // Extract image URLs
-
-            const breakdown = await Breakdown.create({
-                user: req.user._id,
-                description,
-                location,
-                vehicleType,
-                issueType,
-                images: uploadedImages, // Store the array of image URLs
-            });
-
-            if (breakdown) {
-                res.status(201).json(breakdown);
-                await notifyNearbyWorkshops(breakdown);
-            } else {
-                res.status(400);
-                throw new Error('Invalid breakdown data');
+        if(!vehicle || !address || !description) {
+            return res.status(400).json({ message: 'Please provide all required fields' });
             }
+        try {
+
+            const geocoded = await client.geocode({
+                params: {
+                    address: address,
+                    key: process.env.GOOGLE_MAPS_API_KEY,
+                },
+                timeout: 1000, // Optional: Timeout in milliseconds
+            })
+            
+
+            if (!geocoded || geocoded.data.results.length === 0) {
+                return res.status(400).json({ message: 'Invalid address provided' });
+            }
+            const { lat, lng } = geocoded.data.results[0].geometry.location;
+    
+            // Extract Cloudinary URLs from req.files (Multer adds this)
+            const photos = req.files?.map((file) => file.path);
+    
+            // Create the breakdown record
+            const breakdown = await Breakdown.create({
+                user: req.user._id, // Assuming req.user is set by your protect middleware
+                vehicle,
+                location: {
+                    coordinates: [lng, lat],
+                },
+                address,
+                description,
+                photos,
+                reportedBy: req.user._id,
+            });
+    
+            res.status(201).json(breakdown);
+    
+            // Notify nearby workshops (implement this function)
+            await notifyNearbyWorkshops(breakdown);
+    
         } catch (error) {
             console.error('Error creating breakdown:', error);
             res.status(500).json({ message: 'Failed to create breakdown', error: error.message });
         }
     }),
-
     // @desc    Get all breakdowns for the authenticated user
     // @route   GET /api/breakdowns/my
     // @access  Private
@@ -60,36 +86,96 @@ const breakdownController = {
     // @desc    Assign a breakdown to a workshop
     // @route   PUT /api/breakdowns/:id/assign
     // @access  Private (Workshop or Admin)
-    assignBreakdown: asyncHandler(async (req, res) => {
+    acceptBreakdown : asyncHandler(async (req, res) => {
         const breakdown = await Breakdown.findById(req.params.id);
-        const { workshopId } = req.body;
-
+    
         if (!breakdown) {
             res.status(404);
             throw new Error('Breakdown not found');
         }
-
+    
+        if (breakdown.status !== 'pending') {
+            res.status(400);
+            throw new Error('Breakdown is not pending or has already been accepted/rejected.');
+        }
+    
+        const workshopId = req.user._id; // Assuming req.user is set by your protect middleware
         const workshop = await User.findById(workshopId);
-
+    
         if (!workshop || workshop.role !== 'workshop') {
             res.status(400);
-            throw new Error('Invalid workshop ID');
+            throw new Error('Invalid workshop user.');
         }
-
+    
         breakdown.assignedWorkshop = workshopId;
+        breakdown.status = 'accepted';
         await breakdown.save();
-
-        // Automatically create a notification
+    
+        // Automatically create a notification for the customer
         await notificationController.createNotification({
             body: {
                 userId: breakdown.user,
-                message: `Your breakdown has been assigned to ${workshop.businessName || workshop.name}`,
+                message: `Your breakdown has been accepted by ${workshop.businessName || workshop.name}.`,
                 relatedObjectId: breakdown._id,
-                type: 'breakdown_assigned',
+                type: 'breakdown_accepted',
             },
         }, { status: () => ({ json: () => { } }) }); // Mock response object
+    
+        res.json({ message: 'Breakdown accepted successfully' });
+    }),
+    rejectBreakdown :asyncHandler(async (req, res) => {
+        const breakdown = await Breakdown.findById(req.params.id);
+    
+        if (!breakdown) {
+            res.status(404);
+            throw new Error('Breakdown not found');
+        }
+    
+        if (breakdown.status !== 'pending') {
+            res.status(400);
+            throw new Error('Breakdown is not pending or has already been accepted/rejected.');
+        }
+    
+        // Automatically create a notification for the customer
+        await notificationController.createNotification({
+            body: {
+                userId: breakdown.user,
+                message: `Your breakdown has been rejected.`,
+                relatedObjectId: breakdown._id,
+                type: 'breakdown_rejected',
+            },
+        }, { status: () => ({ json: () => { } }) }); // Mock response object
+    
+        res.json({ message: 'Breakdown rejected successfully' });
+    }),
 
-        res.json({ message: 'Breakdown assigned successfully' });
+    cancelBreakdown : asyncHandler(async (req, res) => {
+        const breakdown = await Breakdown.findById(req.params.id);
+    
+        if (!breakdown) {
+            res.status(404);
+            throw new Error('Breakdown not found');
+        }
+    
+        if (breakdown.status === 'completed' || breakdown.status === 'cancelled') {
+            res.status(400);
+            throw new Error('Breakdown is already completed or cancelled.');
+        }
+    
+        breakdown.status = 'cancelled';
+        await breakdown.save();
+    
+        // Automatically create a notification for the customer (optional, but good practice)
+        await notificationController.createNotification({
+            body: {
+                userId: breakdown.user,
+                message: `Your breakdown has been cancelled.`,
+                relatedObjectId: breakdown._id,
+                type: 'breakdown_cancelled',
+            },
+        }, { status: () => ({ json: () => { } }) });
+    
+        res.json({ message: 'Breakdown cancelled successfully' });
     }),
 
     // @desc    Update breakdown status
@@ -114,14 +200,12 @@ const breakdownController = {
     // @route   DELETE /api/breakdowns/:id
     // @access  Private (Customer or Admin)
     deleteBreakdown: asyncHandler(async (req, res) => {
-        const breakdown = await Breakdown.findById(req.params.id);
+        const breakdown = await Breakdown.findByIdAndDelete(req.params.id);
 
         if (!breakdown) {
             res.status(404);
             throw new Error('Breakdown not found');
         }
-
-        await breakdown.remove();
         res.json({ message: 'Breakdown deleted successfully' });
     }),
 };
@@ -137,7 +221,7 @@ async function notifyNearbyWorkshops(breakdown) {
                 userId: workshop._id,
                 message: `New breakdown request near you: ${breakdown.description}`,
                 relatedObjectId: breakdown._id,
-                type: 'new_breakdown',
+                type: 'breakdown_request',
             },
         }, { status: () => ({ json: () => { } }) });
 

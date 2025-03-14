@@ -17,6 +17,8 @@ const notificationSchema = new mongoose.Schema({
             'message_received',
             'workshop_on_the_way',
             'payment_confirmation',
+            'breakdown_accepted',
+            'breakdown_rejected'
         ],
         required: true,
     },
