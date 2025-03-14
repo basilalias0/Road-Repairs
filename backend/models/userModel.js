@@ -1,118 +1,40 @@
 const mongoose = require('mongoose');
 
 const userSchema = new mongoose.Schema({
-  userType: {
-    type: String,
-    required: true,
-    enum: ['owner', 'workshop'],
-    message: 'User type must be "owner" or "workshop"' // Custom error message
-  },
-  email: {
-    type: String,
-    required: true,
-    unique: true,
-    lowercase: true,
-    trim: true,
-    match: /^[a-zA-Z0-9._-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,6}$/, // Email validation regex
-    message: 'Invalid email address'
-  },
-  password: {
-    type: String,
-    required: true,
-    minlength: [6, 'Password must be at least 6 characters'], // Minlength with custom message
-    //  IMPORTANT: Do NOT store plain passwords. Use bcrypt to hash!
-  },
-  firstName: {
-    type: String,
-    required: true,
-    trim: true // Remove leading/trailing spaces
-  },
-  lastName: {
-    type: String,
-    required: true,
-    trim: true
-  },
-  phone: {
-    type: String,
-    required: true,
-    match: /^\d{10}$/, // Example 10-digit phone number validation (adjust as needed)
-    message: 'Invalid phone number'
-  },
-  address: {
-    type: String,
-    required: true
-  },
-  location: {
-    type: {
-      type: String,
-      enum: ['Point'],
-      required: true,
-      message: 'Location type must be "Point"'
+    name: { type: String, required: true },
+    email: { type: String, required: true, unique: true },
+    password: { type: String, required: true },
+    phone: { type: String },
+    address: { type: String },
+    role: {
+        type: String,
+        enum: ['customer', 'workshop', 'admin'],
+        required: true,
     },
-    coordinates: {
-      type: [Number],
-      required: true,
-      index: '2dsphere', // For geospatial queries
-      validate: [
-        (val) => val.length === 2, // Ensure coordinates array has two elements
-        'Coordinates must be an array of [longitude, latitude]'
-      ]
-    }
-  },
-  isVerified: {
-    type: Boolean,
-    default: false
-  },
-  profilePicture: {
-    type: String
-  },
+    isVerified: { type: Boolean, default: false }, // For workshop verification
+    profilePicture: { type: String }, // URL to profile picture
+    // Workshop-specific fields
+    businessName: { type: String },
+    servicesOffered: [{ type: String }],
+    hoursOfOperation: {
+        monday: { open: String, close: String },
+        tuesday: { open: String, close: String },
+        wednesday: { open: String, close: String },
+        thursday: { open: String, close: String },
+        friday: { open: String, close: String },
+        saturday: { open: String, close: String },
+        sunday: { open: String, close: String },
+    },
+    daysOff: [{ type: Date }],
+    location: { // For storing GPS coordinates
+        type: { type: String, enum: ['Point'], default: 'Point' },
+        coordinates: { type: [Number], default: [0, 0] }, // [longitude, latitude]
+    },
+    resetPin: { type: String }, // Add resetPin field
+    resetPinExpiry: { type: Date }, // Add resetPinExpiry field
+}, { timestamps: true });
 
-  // Workshop-specific fields (only if userType is 'workshop')
-  businessName: {
-    type: String,
-    required: function() { return this.userType === 'workshop'; }, // Conditional validation
-    trim: true
-  },
-  servicesOffered: {
-    type: [String],
-    required: function() { return this.userType === 'workshop'; }
-  },
-  workshopPhotos: {
-    type: [String]
-  },
-  operatingHours: {
-    type: String
-  },
-  registrationNumber: {
-    type: String
-  },
-  approved: {
-    type: Boolean,
-    default: false
-  },
-
-  // Vehicle Owner Specific
-  emergencyContact: {
-    type: String,
-    required: function() { return this.userType === 'owner'; }
-  },
-  vehicleDetails: [{
-    make: String,
-    model: String,
-    year: Number,
-    registrationNumber: String
-  }],
-
-  isActive: {
-    type: Boolean,
-    default: true
-  },
-
-  resetPasswordToken: String,
-  resetPasswordExpires: Date,
-
-}, 
-{ timestamps: true });
+userSchema.index({ location: '2dsphere' }); // For geospatial queries
 
 const User = mongoose.model('User', userSchema);
 

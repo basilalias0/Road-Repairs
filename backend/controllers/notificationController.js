@@ -1,161 +1,119 @@
 const asyncHandler = require('express-async-handler');
 const Notification = require('../models/notificationModel');
-const Breakdown = require('../models/breakdownModel'); // Import Breakdown model
-const User = require('../models/userModel'); // Import User model
-const transporter = require('../config/nodemailer'); // Import your nodemailer transporter
+const User = require('../models/userModel');
+const transporter = require('../utils/emailTransporter'); // Your nodemailer transporter
+const Breakdown = require('../models/breakdownModel');
 
 const notificationController = {
-    // Function to create a notification (used internally)
-    createNotification: async (user, type, relatedObjectId, modelType, message) => {
-        try {
-            const notification = await Notification.create({
-                user,
-                type,
-                relatedObjectId,
-                modelType,
-                message,
-            });
-            return notification;
-        } catch (error) {
-            console.error("Error creating notification:", error);
-            throw error; // Re-throw the error for handling in the calling function
-        }
-    },
+    // @desc    Create a new notification and send email (if applicable)
+    // @route   POST /api/notifications
+    // @access  Private (Admin only)
+    createNotification: asyncHandler(async (req, res) => {
+        const { userId, message, relatedObjectId, type } = req.body;
 
-    // Function to send email notification
-    sendEmailNotification: async (user, message) => {
-        try {
-            const mailOptions = {
-                from: process.env.EMAIL_USER,
-                to: user.email,
-                subject: "New Notification", // Customize the email subject
-                html: `<p>${message}</p>`, // Customize the email body
-            };
+        const notification = await Notification.create({
+            user: userId,
+            message,
+            relatedObjectId,
+            type,
+        });
 
-            const info = await transporter.sendMail(mailOptions);
-            console.log("Email sent: " + info.response);
-        } catch (error) {
-            console.error("Error sending email:", error);
-            // Handle the error appropriately (e.g., log it, but don't stop the notification process)
-        }
-    },
+        if (notification) {
+            // Send email based on notification type (optional)
+            await sendNotificationEmail(userId, message, type, relatedObjectId);
 
-    // Example: Create notification when a breakdown is requested
-    handleBreakdownRequest: async (breakdown) => {
-        try {
-            const workshopUsers = await User.find({ userType: 'workshop' }); // Find all workshops
-
-            if (!workshopUsers || workshopUsers.length === 0) {
-                console.log("No workshops found to send notifications.");
-                return; // No workshops found to send notifications
+            if (res && res.status) { // checks if res object exists.
+                res.status(201).json(notification);
             }
-
-            for (const workshop of workshopUsers) {
-                const message = `A new breakdown request has been submitted. Breakdown ID: ${breakdown._id}`;
-
-                const notification = await notificationController.createNotification(
-                    workshop._id,
-                    'breakdown_request',
-                    breakdown._id,
-                    'Breakdown',
-                    message
-                );
-
-                if (notification) {
-                    await notificationController.sendEmailNotification(workshop, message);
-                }
-
+        } else {
+            if(res && res.status){
+                res.status(400);
+                throw new Error('Invalid notification data');
             }
-
-        } catch (error) {
-            console.error("Error handling breakdown request:", error);
-        }
-    },
-
-    // Example: Create notification when a workshop approves a breakdown
-    handleBreakdownApproval: async (breakdown) => {
-        try {
-            const owner = await User.findById(breakdown.user); // Find the owner
-            if (!owner) {
-                console.error('Owner not found for this breakdown');
-                return;
-            }
-
-            const message = `Your breakdown request has been approved. Breakdown ID: ${breakdown._id}`;
-
-            const notification = await notificationController.createNotification(
-                owner._id,
-                'workshop_response',
-                breakdown._id,
-                'Breakdown',
-                message
-            );
-
-            if (notification) {
-                await notificationController.sendEmailNotification(owner, message);
-            }
-
-        } catch (error) {
-            console.error("Error handling breakdown approval:", error);
-        }
-    },
-
-
-    getNotifications: asyncHandler(async (req, res) => {
-        try {
-            const userId = req.user._id;
-            const notifications = await Notification.find({ user: userId }).sort({ createdAt: -1 }); // Sort by latest
-            res.json(notifications);
-        } catch (error) {
-            console.error("Error getting notifications:", error);
-            res.status(500).json({ message: 'Server error getting notifications' });
         }
     }),
 
-    markAsRead: asyncHandler(async (req, res) => {
-        const notificationId = req.params.id;
-        const userId = req.user._id;
+    // @desc    Get all notifications for a user
+    // @route   GET /api/notifications/my
+    // @access  Private
+    getUserNotifications: asyncHandler(async (req, res) => {
+        const notifications = await Notification.find({ user: req.user._id }).populate('relatedObjectId');
+        res.json(notifications);
+    }),
 
-        try {
-            const notification = await Notification.findById(notificationId);
-            if (!notification) {
-                return res.status(404).json({ message: 'Notification not found' });
-            }
+    // @desc    Get a specific notification by ID
+    // @route   GET /api/notifications/:id
+    // @access  Private
+    getNotificationById: asyncHandler(async (req, res) => {
+        const notification = await Notification.findById(req.params.id).populate('relatedObjectId');
 
-            if (notification.user.toString() !== userId.toString()) {
-                return res.status(403).json({ message: 'Unauthorized: You are not the owner of this notification' });
-            }
-
-            notification.read = true;
-            await notification.save();
-            res.json({ message: 'Notification marked as read' });
-        } catch (error) {
-            console.error("Error marking notification as read:", error);
-            res.status(500).json({ message: 'Server error updating notification' });
+        if (notification) {
+            res.json(notification);
+        } else {
+            res.status(404);
+            throw new Error('Notification not found');
         }
     }),
 
+    // @desc    Delete a notification
+    // @route   DELETE /api/notifications/:id
+    // @access  Private
     deleteNotification: asyncHandler(async (req, res) => {
-        const notificationId = req.params.id;
-        const userId = req.user._id;
+        const notification = await Notification.findById(req.params.id);
 
-        try {
-            const notification = await Notification.findById(notificationId);
-            if (!notification) {
-                return res.status(404).json({ message: 'Notification not found' });
-            }
-
-            if (notification.user.toString() !== userId.toString()) {
-                return res.status(403).json({ message: 'Unauthorized: You are not the owner of this notification' });
-            }
-
-            await notification.remove();
-            res.json({ message: 'Notification deleted successfully' });
-        } catch (error) {
-            console.error("Error deleting notification:", error);
-            res.status(500).json({ message: 'Server error deleting notification' });
+        if (!notification) {
+            res.status(404);
+            throw new Error('Notification not found');
         }
+
+        await notification.remove();
+        res.json({ message: 'Notification deleted successfully' });
     }),
 };
+
+// Helper function to send email based on notification type
+async function sendNotificationEmail(userId, message, type, relatedObjectId) {
+    try {
+        const user = await User.findById(userId);
+        if (!user) {
+            console.error('User not found for notification email.');
+            return;
+        }
+
+        let subject = 'Notification from our service';
+        let emailBody = message;
+
+        // Customize email based on notification type
+        if (type === 'new_breakdown') {
+            const breakdown = await Breakdown.findById(relatedObjectId);
+            if (breakdown) {
+                subject = 'New Breakdown Request';
+                emailBody = `A new breakdown request has been submitted near you:\n\nDescription: ${breakdown.description}\nLocation: ${breakdown.location}\nVehicle Type: ${breakdown.vehicleType}\nIssue Type: ${breakdown.issueType}\n\nPlease check the application for more details.`;
+            }
+        } else if (type === 'breakdown_assigned') {
+            // Add other notification type specific email content
+            subject = 'Breakdown Assigned';
+            emailBody = message;
+        } else if (type === 'new_review'){
+            subject = "New Review Received";
+            emailBody = message;
+        } else if (type === 'payment_received'){
+            subject = "Payment Received";
+            emailBody = message;
+        }
+
+        const mailOptions = {
+            from: process.env.EMAIL_USER,
+            to: user.email,
+            subject: subject,
+            text: emailBody,
+        };
+
+        const info = await transporter.sendMail(mailOptions);
+        console.log('Notification email sent: ' + info.response);
+    } catch (error) {
+        console.error('Error sending notification email:', error);
+    }
+}
 
 module.exports = notificationController;

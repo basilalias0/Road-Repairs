@@ -1,15 +1,13 @@
 const express = require('express');
 const reviewRouter = express.Router();
 const reviewController = require('../controllers/reviewController');
-const isAuth = require('../middlewares/isAuth');
+const { protect, authorize } = require('../middleware/authMiddleware');
 
-
-// Routes for creating and managing reviews
-
-reviewRouter.post('/', isAuth, reviewController.createReview); // Create a new review (protected)
-reviewRouter.get('/workshop/:workshopId', reviewController.getReviews); // Get reviews for a specific workshop (public)
-reviewRouter.get('/:id', reviewController.getReviewById); // Get a specific review by ID (public)
-reviewRouter.put('/:id', isAuth, reviewController.updateReview); // Update a review (protected, requires authorization)
-reviewRouter.delete('/:id', isAuth, reviewController.deleteReview); // Delete a review (protected, requires authorization)
+reviewRouter.post('/', protect, authorize('customer'), reviewController.createReview);
+reviewRouter.get('/workshop/:workshopId', reviewController.getWorkshopReviews);
+reviewRouter.get('/my', protect, reviewController.getMyReviews);
+reviewRouter.get('/:id', protect, reviewController.getReviewById);
+reviewRouter.put('/:id', protect, reviewController.updateReview);
+reviewRouter.delete('/:id', protect, authorize('customer', 'admin'), reviewController.deleteReview);
 
 module.exports = reviewRouter;

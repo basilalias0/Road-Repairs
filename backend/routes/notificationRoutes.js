@@ -1,12 +1,11 @@
 const express = require('express');
 const notificationRouter = express.Router();
 const notificationController = require('../controllers/notificationController');
-const isAuth = require('../middlewares/isAuth');
+const { protect, authorize } = require('../middleware/authMiddleware');
 
-
-// Notification Routes (protected)
-notificationRouter.get('/', isAuth, notificationController.getNotifications);
-notificationRouter.put('/:id/read', isAuth, notificationController.markAsRead);
-notificationRouter.delete('/:id', isAuth, notificationController.deleteNotification);
+notificationRouter.post('/', protect, authorize('admin'), notificationController.createNotification); // Only admin can create notifications for now
+notificationRouter.get('/my', protect, notificationController.getUserNotifications);
+notificationRouter.get('/:id', protect, notificationController.getNotificationById);
+notificationRouter.delete('/:id', protect, notificationController.deleteNotification);
 
 module.exports = notificationRouter;

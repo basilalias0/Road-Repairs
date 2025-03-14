@@ -1,289 +1,296 @@
-const User = require('../models/User');
-const bcrypt = require('bcrypt');
-const jwt = require('jsonwebtoken');
-const crypto = require('crypto');
-const asyncHandler = require('express-async-handler'); // Install: npm install express-async-handler
-const transporter = require('../utils/nodeMailerTransporter');
+const asyncHandler = require('express-async-handler');
+const User = require('../models/userModel');
+const generateToken = require('../utils/generateToken');
+const bcrypt = require('bcryptjs');
+const transporter = require('../utils/emailTransporter');
+const randomatic = require('randomatic');
+const { Client } = require('@googlemaps/google-maps-services-js');
+const client = new Client({});
 
+const userController = {
+    // @desc    Register a new user
+    // @route   POST /api/users
+    // @access  Public
+    registerUser: asyncHandler(async (req, res) => {
+        const { name, email, password, role, phone, address, businessName, servicesOffered, hoursOfOperation, daysOff, location } = req.body;
 
-const userController={
-    generateToken:(id) => {
-        return jwt.sign({ id }, process.env.JWT_SECRET, {
-          expiresIn: '30d',
-        });
-      },
-    registerUser:asyncHandler(async (req, res) => {
-        const { firstName, 
-                lastName, 
-                email, 
-                password, 
-                userType, 
-                phone, 
-                emergencyContact, 
-                vehicleDetails } = req.body;
-         if (!firstName || !lastName || !email || !password || !userType || !phone) {
-        res.status(400);
-        throw new Error('Please fill in all required fields'); // More specific error message
+        if(!name || !email || !password || !role){
+          res.status(404).send('Enter all fields');
         }
-
-        if (userType !== 'owner' && userType !== 'workshop') {
-            res.status(400);
-            throw new Error('Invalid user type. Must be "owner" or "workshop"');
-        }
-
-        if (userType === 'owner' && (!emergencyContact || !vehicleDetails || vehicleDetails.length === 0)) {
-            res.status(400);
-            throw new Error('Emergency contact and vehicle details are required for owners');
-        }
-
-        if (userType === 'workshop' && !req.body.businessName) { // Example: Business name is required for workshops
-            res.status(400);
-            throw new Error('Business name is required for workshops');
-        }
-      
         const userExists = await User.findOne({ email });
+
         if (userExists) {
-          res.status(400);
-          throw new Error('User already exists'); // Express-async-handler will catch this
+            res.status(400);
+            throw new Error('User already exists');
         }
-      
+
         const salt = await bcrypt.genSalt(10);
         const hashedPassword = await bcrypt.hash(password, salt);
-      
-        const userCreated = await User.create({
-          firstName,
-          lastName,
+
+        if (role === 'workshop' && !location){
+          res.status(400);
+          throw new Error('Workshop must have a location');
+        }
+
+        let userLocation = location; // Default to the provided location
+
+        if (role === 'workshop' && location) {
+            try {
+                const geocodeResponse = await client.geocode({
+                    params: {
+                        address: location,
+                        key: process.env.GOOGLE_MAPS_API_KEY,
+                    },
+                    timeout: 1000,
+                });
+
+                if (geocodeResponse.data.results && geocodeResponse.data.results.length > 0) {
+                    const { lat, lng } = geocodeResponse.data.results[0].geometry.location;
+                    userLocation = {
+                        type: 'Point',
+                        coordinates: [lng, lat],
+                    };
+                } else {
+                    console.error('Geocoding failed: No results found.');
+                    // Optionally, handle the error (e.g., return a message to the client)
+                }
+            } catch (error) {
+                console.error('Geocoding error:', error);
+                // Optionally, handle the error
+            }
+        }
+
+        const user = await User.create({
+          name,
           email,
           password: hashedPassword,
-          userType,
+          role,
           phone,
-          emergencyContact,
-          vehicleDetails,
-        });
-      
-        if (!userCreated) {
-            res.status(500).send("User is not created")
-        }
-        const verificationToken = crypto.randomBytes(3).toString('hex');
-        userCreated.verificationToken = verificationToken;
-            await userCreated.save();
-        
-            const verificationLink = `${process.env.FRONTEND_URL}/verify/${verificationToken}`; // Create verification link
-        
-            const mailOptions = {
-              from: process.env.EMAIL_USER,
-              to: userCreated.email,
-              subject: "Verify Your Email",
-              html: `Please click this link to verify your email: <a href="${verificationLink}">${verificationLink}</a>`, // Use HTML for email content
-            };
-        
-            transporter.sendMail(mailOptions, (error, info) => {
-              if (error) {
-                res.status(500).json({message: "User registered but email could not be sent."})
-              } else {
-                console.log("Email sent: " + info.response);
-              }
-            })
-          res.status(201).json({
-            _id: userCreated._id,
-            firstName: userCreated.firstName,
-            lastName: userCreated.lastName,
-            email: userCreated.email,
-            userType: userCreated.userType,
-            message: 'User registered successfully. Please check your email to verify your account.'
-          });
-      }),
+          address,
+          businessName,
+          servicesOffered,
+          hoursOfOperation,
+          daysOff,
+          location: userLocation, // Use the converted location
+      });
 
-      verifyEmail:asyncHandler(async (req, res) => {
-        const { token } = req.params;
-      
-        const userFound = await User.findOne({ verificationToken: token });
-      
-        if (!userFound) {
-          res.status(400);
-          throw new Error('Invalid verification token');
-        }
-      
-        userFound.isVerified = true;
-        userFound.verificationToken = undefined;
-        await userFound.save();
-      
-        res.json({ message: 'Email verified successfully' });
-      }),
-      loginUser:asyncHandler(async (req, res) => {
-        const { email, password } = req.body;
-        if(!email || !password) {
-          res.status(400).json({message: 'Please provide both email and password.'})
-          }
-      
-        const user = await User.findOne({ email });
-      
-        if (user && (await bcrypt.compare(password, user.password))) {
-          if (!user.isVerified) {
-            res.status(400);
-            throw new Error('Please verify your email first');
-          }
-          res.json({
-            id: user._id,
-            firstName: user.firstName,
-            lastName: user.lastName,
-            email: user.email,
-            userType: user.userType,
-            token: userController.generateToken(user._id),
-          });
+        if (user) {
+            res.status(201).json({
+                _id: user._id,
+                name: user.name,
+                email: user.email,
+                role: user.role,
+                token: generateToken(user._id, user.role),
+            });
         } else {
-          res.status(401);
-          throw new Error('Invalid credentials');
+            res.status(400);
+            throw new Error('Invalid user data');
         }
-      }),
-      getUserProfile:asyncHandler(async (req, res) => {
-        const user = await User.findById(req.user._id).select('-password');
-        if (!user) {
+    }),
+
+    // @desc    Authenticate a user
+    // @route   POST /api/users/login
+    // @access  Public
+    loginUser: asyncHandler(async (req, res) => {
+        const { email, password } = req.body;
+
+        const user = await User.findOne({ email });
+
+        if (user && (await bcrypt.compare(password, user.password))) {
+            res.json({
+                _id: user._id,
+                name: user.name,
+                email: user.email,
+                role: user.role,
+                profilePicture:user.profilePicture,
+                token: generateToken(user._id, user.role),
+            });
+        } else {
+            res.status(401);
+            throw new Error('Invalid email or password');
+        }
+    }),
+
+    // @desc    Get user profile
+    // @route   GET /api/users/profile
+    // @access  Private
+    getUserProfile: asyncHandler(async (req, res) => {
+        const user = await User.findById(req.user._id);
+
+        if (user) {
+            res.json({
+                _id: user._id,
+                name: user.name,
+                email: user.email,
+                role: user.role,
+                phone: user.phone,
+                address: user.address,
+                businessName: user.businessName,
+                servicesOffered: user.servicesOffered,
+                hoursOfOperation: user.hoursOfOperation,
+                daysOff: user.daysOff,
+                location: user.location,
+                profilePicture: user.profilePicture,
+            });
+        } else {
             res.status(404);
             throw new Error('User not found');
-          }
-        res.json(user);
-      }),
-      updateUserProfile: asyncHandler(async (req, res) => {
-        const { firstName, lastName, email, phone, address, location, emergencyContact, vehicleDetails } = req.body;
-      
-        const user = await User.findById(req.user._id);
-      
+        }
+    }),
+
+    // @desc    Update user profile
+    // @route   PUT /api/users/profile
+    // @access  Private
+    updateUserProfile: asyncHandler(async (req, res) => {
+      const user = await User.findById(req.user._id);
+
         if (user) {
-          user.firstName = firstName || user.firstName;
-          user.lastName = lastName || user.lastName;
-          user.email = email || user.email;
-          user.phone = phone || user.phone;
-          user.address = address || user.address;
-          user.location = location || user.location;
-          user.emergencyContact = emergencyContact || user.emergencyContact;
-          user.vehicleDetails = vehicleDetails || user.vehicleDetails;
-      
-          const updatedUser = await user.save();
-      
-          res.json({
-            _id: updatedUser._id,
-            firstName: updatedUser.firstName,
-            lastName: updatedUser.lastName,
-            email: updatedUser.email,
-            phone: updatedUser.phone,
-            address: updatedUser.address,
-            location: updatedUser.location,
-            emergencyContact: updatedUser.emergencyContact,
-            vehicleDetails: updatedUser.vehicleDetails,
-          });
-        } else {
-          res.status(404);
-          throw new Error('User not found');
-        }
-      }),
-      forgotPassword:asyncHandler(async (req, res) => {
-        const { email } = req.body;
-      
-        const user = await User.findOne({ email });
-      
-        if (!user) {
-          res.status(404);
-          throw new Error('User not found');
-        }
-      
-        const resetToken = crypto.randomBytes(20).toString('hex');
-      
-        user.resetPasswordToken = resetToken;
-        user.resetPasswordExpires = Date.now() + 3600000; // 1 hour
-        await user.save();
-      
-        const resetURL = `${process.env.FRONTEND_URL}/reset-password/${resetToken}`;
-      
-        const mailOptions = {
-          from: process.env.EMAIL_USER,
-          to: user.email,
-          subject: 'Password Reset Request',
-          html: `Please click this link to reset your password: <a href="${resetURL}">${resetURL}</a>`,
-        };
-      
-        transporter.sendMail(mailOptions, (error, info) => {
-          if (error) {
-            console.error("Error sending email:", error);
-            res.status(500).json({ message: "Password reset email could not be sent." }); // More specific message
-          } else {
-            console.log("Email sent: " + info.response);
-            res.json({ message: 'Password reset email sent' }); // Send success response *after* successful email sending
+            
+            if (req.body.email && req.body.email !== user.email) {
+              const emailExists = await User.findOne({ email: req.body.email });
+              if (emailExists) {
+                  res.status(400);
+                  throw new Error('Email already taken');
+              }
+              user.email = req.body.email;
           }
-        });
-      }),
-      resetPassword: asyncHandler(async (req, res) => {
-        const { token } = req.params;
-        const { password } = req.body;
-      
-        const user = await User.findOne({ resetPasswordToken: token, resetPasswordExpires: { $gt: Date.now() } });
-      
-        if (!user) {
-          res.status(400);
-          throw new Error('Invalid or expired reset token');
-        }
-      
-        const salt = await bcrypt.genSalt(10);
-        const hashedPassword = await bcrypt.hash(password, salt);
-      
-        user.password = hashedPassword;
-        user.resetPasswordToken = undefined;
-        user.resetPasswordExpires = undefined;
-        await user.save();
-      
-        res.json({ message: 'Password reset successfully' });
-      }),
-      changePassword:asyncHandler(async (req, res) => {
-        const { currentPassword, newPassword } = req.body;
-      
-        if (!currentPassword || !newPassword) {
-          res.status(400);
-          throw new Error('Please provide both current and new passwords');
-        }
-      
-        if (newPassword.length < 6) { // Example: Minimum password length
-          res.status(400);
-          throw new Error('New password must be at least 6 characters long');
-        }
-      
-        const user = await User.findById(req.user._id); // req.user is set by authenticate middleware
-      
-        if (!user) {
-          res.status(404);
-          throw new Error('User not found'); // Should not happen if authenticate is working
-        }
-      
-        const passwordMatch = await bcrypt.compare(currentPassword, user.password);
-      
-        if (!passwordMatch) {
-          res.status(401);
-          throw new Error('Incorrect current password');
-        }
-      
-        // Hash the new password
-        const salt = await bcrypt.genSalt(10);
-        const hashedPassword = await bcrypt.hash(newPassword, salt);
-      
-        user.password = hashedPassword;
-        await user.save();
-      
-        res.json({ message: 'Password changed successfully' });
-      }),
+            user.name = req.body.name || user.name;
+            user.phone = req.body.phone || user.phone;
+            user.address = req.body.address || user.address;
+            user.businessName = req.body.businessName || user.businessName;
+            user.servicesOffered = req.body.servicesOffered || user.servicesOffered;
+            user.hoursOfOperation = req.body.hoursOfOperation || user.hoursOfOperation;
+            user.daysOff = req.body.daysOff || user.daysOff;
+            
+            if (req.file) {
+              user.profilePicture = req.file.path; // Use the path from multer-storage-cloudinary
+            }
+            if (req.body.password) {
+              if (!req.body.oldPassword) {
+                  res.status(400);
+                  throw new Error('Old password is required');
+              }
 
-      deleteUser:asyncHandler(async (req, res) => {
-        const userId = req.user._id; // Get ID from req.user (authenticated user)
-    
-        const user = await User.findById(userId);
-    
-        if (!user) {
+              const passwordMatch = await bcrypt.compare(req.body.oldPassword, user.password);
+
+              if (!passwordMatch) {
+                  res.status(401);
+                  throw new Error('Incorrect old password');
+              }
+
+              const salt = await bcrypt.genSalt(10);
+              user.password = await bcrypt.hash(req.body.password, salt);
+          }
+            if (req.body.location) {
+              try {
+                  const geocodeResponse = await client.geocode({
+                      params: {
+                          address: req.body.location,
+                          key: process.env.GOOGLE_MAPS_API_KEY,
+                      },
+                      timeout: 1000, // milliseconds
+                  });
+
+                  if (geocodeResponse.data.results && geocodeResponse.data.results.length > 0) {
+                      const { lat, lng } = geocodeResponse.data.results[0].geometry.location;
+                      user.location = {
+                          type: 'Point',
+                          coordinates: [lng, lat], // [longitude, latitude]
+                      };
+                  } else {
+                      console.error('Geocoding failed: No results found.');
+                      // Optionally, handle the error (e.g., return a message to the client)
+                  }
+              } catch (error) {
+                  console.error('Geocoding error:', error);
+                  // Optionally, handle the error
+              }
+          }
+
+
+            const updatedUser = await user.save();
+
+            res.json({
+                _id: updatedUser._id,
+                name: updatedUser.name,
+                email: updatedUser.email,
+                role: updatedUser.role,
+                profilePicture:user.profilePicture,
+                token: generateToken(updatedUser._id, updatedUser.role),
+            });
+        } else {
             res.status(404);
-            throw new Error('User not found'); // Should not happen if authentication is working correctly
+            throw new Error('User not found');
         }
-    
-        await user.remove(); // Or User.findByIdAndDelete(userId)
-    
-        res.json({ message: 'User deleted successfully' });
-    })
-}
+    }),
+     // @desc    Forgot password - generate and send reset pin
+    // @route   POST /api/users/forgotpassword
+    // @access  Public
+    forgotPassword: asyncHandler(async (req, res) => {
+      const { email } = req.body;
 
-module.exports = userController
+      const user = await User.findOne({ email });
+
+      if (!user) {
+          res.status(404);
+          throw new Error('User not found');
+      }
+
+      const resetPin = randomatic('0',6)
+      
+      user.resetPin = resetPin;
+      user.resetPinExpiry = Date.now() + 10 * 60 * 1000; // 10 minutes expiry
+
+      console.log(await user.save());
+       
+
+      const mailOptions = {
+          from: process.env.EMAIL_USERNAME,
+          to: user.email,
+          subject: 'Password Reset Pin',
+          text: `Your password reset pin is: ${resetPin}`,
+      };
+
+      transporter.sendMail(mailOptions, (error, info) => {
+          if (error) {
+              console.error(error);
+              res.status(500).json({ message: 'Failed to send email' });
+          } else {
+              console.log('Email sent: ' + info.response);
+              res.json({ message: 'Reset pin sent to your email' });
+          }
+      });
+  }),
+
+  // @desc    Reset password using pin
+  // @route   PUT /api/users/resetpassword
+  // @access  Public
+  resetPassword: asyncHandler(async (req, res) => {
+      const { email, pin, password } = req.body;
+
+      const user = await User.findOne({ email });
+
+      if (!user) {
+          res.status(404);
+          throw new Error('User not found');
+      }
+
+      if (user.resetPin !== pin || user.resetPinExpiry < Date.now()) {
+          res.status(400);
+          throw new Error('Invalid or expired reset pin');
+      }
+
+      const salt = await bcrypt.genSalt(10);
+      const hashedPassword = await bcrypt.hash(password, salt);
+
+      user.password = hashedPassword;
+      user.resetPin = undefined; // Clear reset pin
+      user.resetPinExpiry = undefined;
+
+      await user.save();
+
+      res.json({ message: 'Password reset successfully' });
+  }),
+};
+
+module.exports = userController;

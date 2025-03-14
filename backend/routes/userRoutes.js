@@ -1,31 +1,16 @@
 const express = require('express');
 const userRouter = express.Router();
+
+const { protect } = require('../middleware/authMiddleware');
 const userController = require('../controllers/userController');
-const isAuth = require('../middlewares/isAuth');
-const isAdmin = require('../middlewares/isAdmin');
+const upload = require('../middleware/uploadMiddleware');
 
-// **User Routes**
 
-// Registration
 userRouter.post('/', userController.registerUser);
-userRouter.get('/verify/:token', userController.verifyEmail);
-
-// Authentication
 userRouter.post('/login', userController.loginUser);
-
-// User Profile (Protected)
-userRouter.get('/profile', isAuth, userController.getUserProfile);
-userRouter.put('/profile', isAuth, userController.updateUserProfile); // Or PATCH
-
-// Password Reset
-userRouter.post('/forgot-password', userController.forgotPassword);
-userRouter.post('/reset-password/:token', userController.resetPassword);
-
-//change Password
-userRouter.put('/change-password', isAuth, userController.changePassword)
-
-//Delete User
-userRouter.delete('/profile', authenticate, userController.deleteUser);
-
+userRouter.get('/profile', protect, userController.getUserProfile);
+userRouter.put('/profile', protect, upload('user').single('profilePicture'), userController.updateUserProfile);
+userRouter.post('/forgotpassword', userController.forgotPassword);
+userRouter.put('/resetpassword', userController.resetPassword);
 
 module.exports = userRouter;
