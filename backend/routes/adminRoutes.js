@@ -1,30 +1,19 @@
 const express = require('express');
 const adminRouter = express.Router();
 const adminController = require('../controllers/adminController');
-const isAdmin = require('../middlewares/isAdmin');
-const isAuth = require('../middlewares/isAuth');
+const { protect, authorize } = require('../middleware/authMiddleware');
 
-// Admin Routes (Protected by both authenticate and isAdmin)
+adminRouter.get('/users', protect, authorize('admin'), adminController.getAllUsers);
+adminRouter.get('/workshops', protect, authorize('admin'), adminController.getAllWorkshops);
+adminRouter.get('/customers', protect, authorize('admin'), adminController.getAllCustomers);
+adminRouter.get('/breakdowns', protect, authorize('admin'), adminController.getAllBreakdowns);
+adminRouter.get('/reviews', protect, authorize('admin'), adminController.getAllReviews);
+adminRouter.get('/notifications', protect, authorize('admin'), adminController.getAllNotifications);
 
-adminRouter.post('/', isAuth, isAdmin, adminController.createAdmin); // Create a new admin
-adminRouter.get('/', isAuth, isAdmin, adminController.getAdmins);     // Get all admins
-adminRouter.get('/:id', isAuth, isAdmin, adminController.getAdminById); // Get admin by ID
-adminRouter.put('/:id', isAuth, isAdmin, adminController.updateAdmin); // Update admin
-adminRouter.delete('/:id', isAuth, isAdmin, adminController.deleteAdmin); // Delete admin
+adminRouter.put('/workshops/:id/verify', protect, authorize('admin'), adminController.verifyWorkshop);
+adminRouter.put('/workshops/:id/suspend', protect, authorize('admin'), adminController.suspendWorkshop);
+adminRouter.delete('/workshops/:id', protect, authorize('admin'), adminController.deleteWorkshop);
 
-adminRouter.get('/breakdowns', isAuth, isAdmin, adminController.getBreakdowns);
-adminRouter.get('/breakdowns/:id', isAuth, isAdmin, adminController.getBreakdownById);
-
-adminRouter.get('/reviews', isAuth, isAdmin, adminController.getReviews);
-adminRouter.get('/reviews/:id', isAuth, isAdmin, adminController.getReviewById);
-
-adminRouter.get('/workshops', isAuth, isAdmin, adminController.getWorkshops);
-adminRouter.get('/workshops/:id', isAuth, isAdmin, adminController.getWorkshopById);
-
-adminRouter.get('/users', authenticaisAuthte, isAdmin, adminController.getUsers);
-adminRouter.get('/users/:id', isAuth, isAdmin, adminController.getUserById);
-
-adminRouter.get('/cars', isAuth, isAdmin, adminController.getCars);
-adminRouter.get('/cars/:id', isAuth, isAdmin, adminController.getCarById);
+adminRouter.post('/admins', protect, authorize('admin'), adminController.addAdmin);
 
 module.exports = adminRouter;

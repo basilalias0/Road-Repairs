@@ -1,50 +1,32 @@
 const mongoose = require('mongoose');
 
-// Breakdown Schema (as before, with minor adjustments)
 const breakdownSchema = new mongoose.Schema({
-  user: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    required: true,
-    message: 'User is required'
-  },
-  vehicle: {
-    type: Object,
-    required: true,
-    message: 'Vehicle details are required'
-  },
-  location: { /* ... */ }, // Same as before
-  address: { /* ... */ }, // Same as before
-  description: { /* ... */ }, // Same as before
-  photos: { /* ... */ }, // Same as before
-  status: { /* ... */ }, // Same as before
-  assignedWorkshop: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    message: 'Assigned workshop must reference a valid user'
-  },
-  estimatedArrivalTime: { type: Date },
-  serviceDetails: { type: String }, // Details of the service provided
-  reportedBy: { // Add a field for who reported, in case it's not the vehicle owner.
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    message: 'Reported by must reference a valid user'
-  },
-  paymentStatus: { // 'pending', 'completed'
-    type: String,
-    enum: ['pending', 'completed'],
-    default: 'pending',
-    message: 'Invalid payment status'
-  },
-  totalCost: {
-    type: Number,
-    min: 0,
-    message: 'Total cost cannot be negative'
-  },
+    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true }, // Customer
+    vehicle: {
+        make: { type: String },
+        model: { type: String },
+        year: { type: Number },
+        registrationNumber: { type: String },
+    },
+    location: { // Where the breakdown occurred
+        type: { type: String, enum: ['Point'], default: 'Point' },
+        coordinates: { type: [Number], default: [0, 0] }, // [longitude, latitude]
+    },
+    address: { type: String }, // Text address
+    description: { type: String, required: true },
+    photos: [{ type: String }], // URLs to photos
+    status: {
+        type: String,
+        enum: ['pending', 'accepted', 'in progress', 'completed', 'cancelled'],
+        default: 'pending',
+    },
+    assignedWorkshop: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }, // Workshop
+    reportedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }, // Customer who reported
+    paymentStatus: { type: String, enum: ['pending', 'paid'], default: 'pending' },
 }, { timestamps: true });
+
+breakdownSchema.index({ location: '2dsphere' });
 
 const Breakdown = mongoose.model('Breakdown', breakdownSchema);
 
-module.exports = Breakdown
-
-
+module.exports = Breakdown;

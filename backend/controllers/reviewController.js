@@ -1,143 +1,117 @@
 const asyncHandler = require('express-async-handler');
-const Breakdown = require('../models/breakdownModel');
-const User = require('../models/userModel');
 const Review = require('../models/reviewModel');
+const User = require('../models/userModel'); // For workshop validation
+const notificationController = require('./notificationController'); // Import notification controller
 
 const reviewController = {
+    // @desc    Create a new review for a workshop
+    // @route   POST /api/reviews
+    // @access  Private (Customer only)
     createReview: asyncHandler(async (req, res) => {
-        const { workshop, rating, comment, breakdown } = req.body;
-        const user = req.user._id; // Get user from authentication middleware
+        const { workshopId, rating, comment } = req.body;
 
-        // 1. Validate required fields
-        if (!workshop || !rating) {
-            return res.status(400).json({ message: 'Workshop and rating are required' });
+        const workshop = await User.findById(workshopId);
+
+        if (!workshop || workshop.role !== 'workshop') {
+            res.status(400);
+            throw new Error('Invalid workshop ID');
         }
 
-        // 2. Check if the user has a completed breakdown with the workshop
-        const completedBreakdown = await Breakdown.findOne({
-            user: user,
-            assignedWorkshop: workshop,
+        const review = await Review.create({
+            user: req.user._id,
+            workshop: workshopId,
+            rating,
+            comment,
         });
 
-        if (!completedBreakdown) {
-            return res.status(400).json({
-                message: 'You can only review a workshop after a completed breakdown with them.'
-            });
-        }
-
-        // 3. Check if a review already exists for this user and workshop
-        const existingReview = await Review.findOne({ user: user, workshop: workshop });
-        if (existingReview) {
-            return res.status(400).json({
-                message: 'You have already reviewed this workshop.'
-            });
-        }
-
-        try {
-            const review = await Review.create({
-                user,
-                workshop,
-                rating,
-                comment,
-                breakdown: completedBreakdown._id // Link to the breakdown if available
-            });
-
+        if (review) {
             res.status(201).json(review);
-
-        } catch (error) {
-            console.error("Error creating review:", error);
-            if (error.name === 'ValidationError') {
-                return res.status(400).json({ message: error.message });
-            }
-            res.status(500).json({ message: 'Server error creating review' });
+            await notificationController.createNotification({
+                body: {
+                    userId: workshopId,
+                    message: `You have received a new review.`,
+                    relatedObjectId: review._id,
+                    type: 'new_review',
+                },
+            }, { status: () => ({ json: () => { } }) });
+        } else {
+            res.status(400);
+            throw new Error('Invalid review data');
         }
     }),
 
-    getReviews: asyncHandler(async (req, res) => {
-        const workshopId = req.params.workshopId; // Get workshop ID from URL parameter
-    
-        try {
-            const reviews = await Review.find({ workshop: workshopId }) // Filter by workshop
-                .populate('user')
-                .populate('workshop');
-    
-            if (!reviews || reviews.length === 0) {
-              return res.status(404).json({ message: 'No reviews found for this workshop' });
-            }
-            res.json(reviews);
-        } catch (error) {
-            console.error("Error getting reviews by workshop:", error);
-            res.status(500).json({ message: 'Server error getting reviews' });
-        }
+    // @desc    Get all reviews for a workshop
+    // @route   GET /api/reviews/workshop/:workshopId
+    // @access  Public
+    getWorkshopReviews: asyncHandler(async (req, res) => {
+        const reviews = await Review.find({ workshop: req.params.workshopId }).populate('user');
+        res.json(reviews);
     }),
 
+    // @desc    Get all reviews by the authenticated user
+    // @route   GET /api/reviews/my
+    // @access  Private
+    getMyReviews: asyncHandler(async (req, res) => {
+        const reviews = await Review.find({ user: req.user._id }).populate('workshop');
+        res.json(reviews);
+    }),
+
+    // @desc    Get a specific review by ID
+    // @route   GET /api/reviews/:id
+    // @access  Private
     getReviewById: asyncHandler(async (req, res) => {
-        const reviewId = req.params.id;
-        try {
-            const review = await Review.findById(reviewId).populate('user').populate('workshop');
-            if (!review) {
-                return res.status(404).json({ message: 'Review not found' });
-            }
+        const review = await Review.findById(req.params.id).populate('user').populate('workshop');
+
+        if (review) {
             res.json(review);
-        } catch (error) {
-            console.error("Error getting review by ID:", error);
-            res.status(500).json({ message: 'Server error getting review' });
+        } else {
+            res.status(404);
+            throw new Error('Review not found');
         }
     }),
 
-    // ... other review functions (update, delete - add authorization as needed)
-
+    // @desc    Update a review
+    // @route   PUT /api/reviews/:id
+    // @access  Private (Review owner only)
     updateReview: asyncHandler(async (req, res) => {
-        const reviewId = req.params.id;
-        const { rating, comment } = req.body;
-        const userId = req.user._id;
+        const review = await Review.findById(req.params.id);
 
-        try {
-            const review = await Review.findById(reviewId);
-            if (!review) {
-                return res.status(404).json({ message: 'Review not found' });
-            }
-
-            if (review.user.toString() !== userId.toString()) {
-                return res.status(403).json({ message: 'Unauthorized: You are not the owner of this review' });
-            }
-
-            review.rating = rating || review.rating;
-            review.comment = comment || review.comment;
-
-            const updatedReview = await review.save();
-            res.json(updatedReview);
-
-        } catch (error) {
-            console.error("Error updating review:", error);
-            if (error.name === 'ValidationError') {
-                return res.status(400).json({ message: error.message });
-            }
-            res.status(500).json({ message: 'Server error updating review' });
+        if (!review) {
+            res.status(404);
+            throw new Error('Review not found');
         }
+
+        if (review.user.toString() !== req.user._id.toString()) {
+            res.status(401);
+            throw new Error('Not authorized to update this review');
+        }
+
+        review.rating = req.body.rating || review.rating;
+        review.comment = req.body.comment || review.comment;
+        await review.save();
+
+        res.json(review);
     }),
 
+    // @desc    Delete a review
+    // @route   DELETE /api/reviews/:id
+    // @access  Private (Review owner or Admin)
     deleteReview: asyncHandler(async (req, res) => {
-        const reviewId = req.params.id;
-        const userId = req.user._id;
+        const review = await Review.findById(req.params.id);
 
-        try {
-            const review = await Review.findById(reviewId);
-            if (!review) {
-                return res.status(404).json({ message: 'Review not found' });
-            }
-
-            if (review.user.toString() !== userId.toString()) {
-                return res.status(403).json({ message: 'Unauthorized: You are not the owner of this review' });
-            }
-
-            await review.remove();
-            res.json({ message: 'Review deleted successfully' });
-        } catch (error) {
-            console.error("Error deleting review:", error);
-            res.status(500).json({ message: 'Server error deleting review' });
+        if (!review) {
+            res.status(404);
+            throw new Error('Review not found');
         }
+
+        if (review.user.toString() !== req.user._id.toString() && req.user.role !== 'admin') {
+            res.status(401);
+            throw new Error('Not authorized to delete this review');
+        }
+
+        await review.remove();
+        res.json({ message: 'Review deleted successfully' });
     }),
 };
 
-module.exports = reviewController;  
+module.exports = reviewController;
