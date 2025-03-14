@@ -3,6 +3,7 @@ const User = require('../models/userModel');
 const Breakdown = require('../models/breakdownModel');
 const Review = require('../models/reviewModel');
 const Notification = require('../models/notificationModel');
+const bcrypt = require('bcryptjs')
 
 const adminController = {
     // Get all users (customers, workshops, admins)
@@ -111,17 +112,25 @@ const adminController = {
     addAdmin: asyncHandler(async (req, res) => {
         const { name, email, password, phone, address } = req.body;
 
+        if(!name || !email || !password) {
+            res.status(400).json({ message: 'Please fill in all fields' });
+            return;
+        }
         // Check if admin already exists
         const existingAdmin = await User.findOne({ email });
         if (existingAdmin) {
             res.status(400).json({ message: 'Admin already exists' });
             return;
         }
+          // Encrypt the password
+        const salt = await bcrypt.genSalt(10); // Generate a salt
+        const hashedPassword = await bcrypt.hash(password, salt); // Hash the password
+
 
         const admin = await User.create({
             name,
             email,
-            password,
+            password:hashedPassword,
             phone,
             address,
             role: 'admin',

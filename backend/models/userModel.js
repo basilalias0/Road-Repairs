@@ -25,7 +25,6 @@ const userSchema = new mongoose.Schema({
         saturday: { open: String, close: String },
         sunday: { open: String, close: String },
     },
-    daysOff: [{ type: Date }],
     location: { // For storing GPS coordinates
         type: { type: String, enum: ['Point'], default: 'Point' },
         coordinates: { type: [Number], default: [0, 0] }, // [longitude, latitude]
