@@ -109,7 +109,7 @@ const reviewController = {
             throw new Error('Not authorized to delete this review');
         }
 
-        await review.remove();
+        await Review.findByIdAndDelete(req.params.id)
         res.json({ message: 'Review deleted successfully' });
     }),
 };
