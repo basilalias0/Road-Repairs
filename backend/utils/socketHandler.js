@@ -59,25 +59,6 @@ module.exports = (io) => {
             io.emit('userLocationUpdated', { userId, latitude, longitude }); // Global broadcast.
             // Or you can emit to certain rooms.
         });
-
-        socket.on('getLocation', async ({ latitude, longitude }) => {
-            try {
-                const response = await axios.get(
-                    `https://maps.googleapis.com/maps/api/geocode/json?latlng=<span class="math-inline">\{latitude\},</span>{longitude}&key=${process.env.GOOGLE_MAPS_API_KEY}`
-                );
-
-                if (response.data.results && response.data.results.length > 0) {
-                    const address = response.data.results[0].formatted_address;
-                    socket.emit('locationAddress', { address });
-                } else {
-                    socket.emit('locationAddress', { address: 'Address not found' });
-                }
-            } catch (error) {
-                console.error('Error fetching address:', error);
-                socket.emit('locationAddress', { address: 'Error fetching address' });
-            }
-        });
-
         socket.on('disconnect', () => {
             console.log('User disconnected');
         });

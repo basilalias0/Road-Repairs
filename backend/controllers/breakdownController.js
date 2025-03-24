@@ -10,52 +10,65 @@ const breakdownController = {
     // @route   POST /api/breakdowns
     // @access  Private (Customer only)
     createBreakdown: asyncHandler(async (req, res) => {
-        const {
-            vehicle, // { make, model, year, registrationNumber }
-            address,
-            description,
-        } = req.body;
+        const { description, location, vehicleType, issueType, selectedWorkshop } = req.body;
 
-        if(!vehicle || !address || !description) {
-            return res.status(400).json({ message: 'Please provide all required fields' });
-            }
         try {
+            let assignedWorkshopId = null;
 
-            const geocoded = await client.geocode({
-                params: {
-                    address: address,
-                    key: process.env.GOOGLE_MAPS_API_KEY,
-                },
-                timeout: 1000, // Optional: Timeout in milliseconds
-            })
-            
+            if (selectedWorkshop) {
+                const workshop = await User.findById(selectedWorkshop);
+                if (workshop && workshop.role === 'workshop') {
+                    assignedWorkshopId = selectedWorkshop;
+                } else {
+                    res.status(400);
+                    throw new Error('Invalid workshop selection');
+                }
+            } else {
+                // Find workshops with the highest average rating
+                const workshops = await User.aggregate([
+                    { $match: { role: 'workshop' } },
+                    {
+                        $lookup: {
+                            from: 'reviews',
+                            localField: '_id',
+                            foreignField: 'workshop',
+                            as: 'reviews',
+                        },
+                    },
+                    {
+                        $project: {
+                            _id: 1,
+                            averageRating: { $avg: '$reviews.rating' },
+                        },
+                    },
+                    { $sort: { averageRating: -1 } },
+                    { $limit: 1 },
+                ]);
 
-            if (!geocoded || geocoded.data.results.length === 0) {
-                return res.status(400).json({ message: 'Invalid address provided' });
+                if (workshops.length > 0) {
+                    assignedWorkshopId = workshops[0]._id;
+                }
             }
-            const { lat, lng } = geocoded.data.results[0].geometry.location;
-    
-            // Extract Cloudinary URLs from req.files (Multer adds this)
-            const photos = req.files?.map((file) => file.path);
-    
-            // Create the breakdown record
+
+            const uploadedImages = req.files ? req.files.map((file) => file.path) : [];
+
             const breakdown = await Breakdown.create({
-                user: req.user._id, // Assuming req.user is set by your protect middleware
-                vehicle,
-                location: {
-                    coordinates: [lng, lat],
-                },
-                address,
+                user: req.user._id,
                 description,
-                photos,
-                reportedBy: req.user._id,
+                location,
+                vehicleType,
+                issueType,
+                images: uploadedImages,
+                assignedWorkshop: assignedWorkshopId,
             });
-    
-            res.status(201).json(breakdown);
-    
-            // Notify nearby workshops (implement this function)
-            await notifyNearbyWorkshops(breakdown);
-    
+
+            if (breakdown) {
+                res.status(201).json(breakdown);
+                await notifyAssignedWorkshop(breakdown);
+            } else {
+                res.status(400);
+                throw new Error('Invalid breakdown data');
+            }
         } catch (error) {
             console.error('Error creating breakdown:', error);
             res.status(500).json({ message: 'Failed to create breakdown', error: error.message });
@@ -207,6 +220,42 @@ const breakdownController = {
             throw new Error('Breakdown not found');
         }
         res.json({ message: 'Breakdown deleted successfully' });
+    }),
+    getWorkshopBreakdowns: asyncHandler(async (req, res) => {
+        const workshopId = req.user._id;
+
+        // Find breakdowns that are either not assigned or assigned to this workshop
+        const breakdowns = await Breakdown.find({
+            $or: [
+                { assignedWorkshop: workshopId },
+            ],
+        })
+            .populate('user', 'name email phone profilePicture')
+            .populate('assignedWorkshop', 'businessName');
+
+        res.json(breakdowns);
+    }),
+
+    completeBreakdown: asyncHandler(async (req, res) => {
+        const { id } = req.params;
+        const workshopId = req.user._id;
+
+        const breakdown = await Breakdown.findById(id);
+
+        if (!breakdown) {
+            res.status(404);
+            throw new Error('Breakdown not found');
+        }
+
+        if (breakdown.assignedWorkshop.toString() !== workshopId.toString()) {
+            res.status(403);
+            throw new Error('Breakdown not assigned to this workshop');
+        }
+
+        breakdown.isCompleted = true;
+        await breakdown.save();
+
+        res.json({ message: 'Breakdown completed successfully' });
     }),
 };
 
