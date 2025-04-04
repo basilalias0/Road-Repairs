@@ -23,6 +23,7 @@ const breakdownSchema = new mongoose.Schema({
     assignedWorkshop: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }, // Workshop
     reportedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }, // Customer who reported
     paymentStatus: { type: String, enum: ['pending', 'paid'], default: 'pending' },
+    issueType: { type: String, required: true },
 }, { timestamps: true });
 
 breakdownSchema.index({ location: '2dsphere' });

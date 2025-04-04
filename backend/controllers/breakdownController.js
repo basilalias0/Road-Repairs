@@ -10,61 +10,25 @@ const breakdownController = {
     // @route   POST /api/breakdowns
     // @access  Private (Customer only)
     createBreakdown: asyncHandler(async (req, res) => {
-        const { description, location, vehicleType, issueType, selectedWorkshop } = req.body;
+        const { description, vehicleType, issueType, latitude, longitude } = req.body;
 
         try {
-            let assignedWorkshopId = null;
-
-            if (selectedWorkshop) {
-                const workshop = await User.findById(selectedWorkshop);
-                if (workshop && workshop.role === 'workshop') {
-                    assignedWorkshopId = selectedWorkshop;
-                } else {
-                    res.status(400);
-                    throw new Error('Invalid workshop selection');
-                }
-            } else {
-                // Find workshops with the highest average rating
-                const workshops = await User.aggregate([
-                    { $match: { role: 'workshop' } },
-                    {
-                        $lookup: {
-                            from: 'reviews',
-                            localField: '_id',
-                            foreignField: 'workshop',
-                            as: 'reviews',
-                        },
-                    },
-                    {
-                        $project: {
-                            _id: 1,
-                            averageRating: { $avg: '$reviews.rating' },
-                        },
-                    },
-                    { $sort: { averageRating: -1 } },
-                    { $limit: 1 },
-                ]);
-
-                if (workshops.length > 0) {
-                    assignedWorkshopId = workshops[0]._id;
-                }
-            }
-
             const uploadedImages = req.files ? req.files.map((file) => file.path) : [];
 
             const breakdown = await Breakdown.create({
                 user: req.user._id,
                 description,
-                location,
                 vehicleType,
                 issueType,
-                images: uploadedImages,
-                assignedWorkshop: assignedWorkshopId,
+                photos: uploadedImages,
+                location: {
+                    type: 'Point',
+                    coordinates: [parseFloat(longitude), parseFloat(latitude)],
+                },
             });
 
             if (breakdown) {
                 res.status(201).json(breakdown);
-                await notifyAssignedWorkshop(breakdown);
             } else {
                 res.status(400);
                 throw new Error('Invalid breakdown data');
@@ -221,6 +185,8 @@ const breakdownController = {
         }
         res.json({ message: 'Breakdown deleted successfully' });
     }),
+
+
     getWorkshopBreakdowns: asyncHandler(async (req, res) => {
         const workshopId = req.user._id;
 

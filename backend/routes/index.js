@@ -8,6 +8,7 @@ const paymentRouter = require('./paymentRouter');
 const chatRouter = require('./chatRoutes');
 const locationRouter = require('./locationRoutes');
 const reportRouter = require('./reportRoutes');
+const productRouter = require('./productRouter');
 const router = express();
 
 
@@ -20,6 +21,6 @@ router.use('/payment',paymentRouter)
 router.use('/chat',chatRouter)
 router.use('location',locationRouter)
 router.use('/report',reportRouter)
-
+router.use('/product',productRouter)
 
 module.exports = router

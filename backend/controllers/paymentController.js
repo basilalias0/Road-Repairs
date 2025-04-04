@@ -40,8 +40,6 @@ const paymentController = {
                 source: stripeToken,
             });
             transactionId = charge.id;
-        } else if (paymentMethod === 'paypal') {
-            // Implement PayPal payment processing here (if used)
         } else {
             res.status(400);
             throw new Error('Invalid payment method');

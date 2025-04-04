@@ -6,32 +6,55 @@ const locationController = {
     // @desc    Find nearby workshops
     // @route   GET /api/locations/workshops/nearby
     // @access  Public
-    findNearbyWorkshops: asyncHandler(async (req, res) => {
-        const { latitude, longitude, radius } = req.query; // Radius in meters
+    findNearbyAndRatedWorkshops: asyncHandler(async (req, res) => {
+        const { latitude, longitude, radius, issueType } = req.query; // Radius in meters
 
-        if (!latitude || !longitude || !radius) {
+        if (!latitude || !longitude || !radius || !issueType) {
             res.status(400);
-            throw new Error('Latitude, longitude, and radius are required');
+            throw new Error('Latitude, longitude, radius, and issueType are required');
         }
 
-        const workshops = await User.find({ role: 'workshop', isVerified: true });
+        const workshops = await User.aggregate([
+            {
+                $match: {
+                    role: 'workshop',
+                    isVerified: true,
+                    servicesOffered: issueType,
+                },
+            },
+            {
+                $geoNear: {
+                    near: {
+                        type: 'Point',
+                        coordinates: [parseFloat(longitude), parseFloat(latitude)],
+                    },
+                    distanceField: 'distance',
+                    maxDistance: parseFloat(radius) * 1000, // Convert kilometers to meters
+                    spherical: true,
+                },
+            },
+            {
+                $lookup: {
+                    from: 'reviews',
+                    localField: '_id',
+                    foreignField: 'workshop',
+                    as: 'reviews',
+                },
+            },
+            {
+                $project: {
+                    _id: 1,
+                    businessName: 1,
+                    servicesOffered: 1,
+                    distance: 1,
+                    averageRating: { $avg: '$reviews.rating' },
+                },
+            },
+            { $sort: { averageRating: -1 } },
+            { $limit: 15 },
+        ]);
 
-        const nearbyWorkshops = workshops.filter((workshop) => {
-            if (workshop.location && workshop.location.coordinates) {
-                const workshopLatitude = workshop.location.coordinates[1];
-                const workshopLongitude = workshop.location.coordinates[0];
-
-                const distance = geolib.getDistance(
-                    { latitude: parseFloat(latitude), longitude: parseFloat(longitude) },
-                    { latitude: workshopLatitude, longitude: workshopLongitude }
-                );
-
-                return distance <= parseFloat(radius);
-            }
-            return false;
-        });
-
-        res.json(nearbyWorkshops);
+        res.json(workshops);
     }),
 
     // @desc    Calculate distance between two points
